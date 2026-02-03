@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>WebSocket Manager</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding-top: 50px; background-color: #222; color: white; }
+        .card { background: #333; padding: 20px; border-radius: 8px; width: 300px; text-align: center; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 4px; font-weight: bold; }
+        .searching { background-color: #e67e22; color: #fff; }
+        .connected { background-color: #27ae60; color: #fff; }
+        .disconnected { background-color: #c0392b; color: #fff; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Connection Manager</h2>
+        <div id="status-display" class="status searching">Iniciando...</div>
+        <div id="logs" style="font-size: 12px; color: #aaa; text-align: left; margin-top: 10px;"></div>
+    </div>
+
+    <script>
+        const BACKEND_HTTP = 'http://localhost:8080/health';
+        const BACKEND_WS = 'ws://localhost:8080';
+        
+        const statusDisplay = document.getElementById('status-display');
+        const logs = document.getElementById('logs');
+        
+        let ws = null;
+        let isPolling = false;
+
+        function log(msg) {
+            logs.innerText = `> ${msg}\n` + logs.innerText.substring(0, 100);
+        }
+
+        function setStatus(state, text) {
+            statusDisplay.className = `status ${state}`;
+            statusDisplay.innerText = text;
+        }
+
+        // 1. Função que tenta validar via HTTP antes de abrir o socket
+        async function startHttpPolling() {
+            if (ws && ws.readyState === WebSocket.OPEN) return; // Já conectado, não faz poll
+            
+            isPolling = true;
+            setStatus('searching', '🔍 Buscando servidor HTTP...');
+            log('Tentando GET /health...');
+
+            try {
+                const response = await fetch(BACKEND_HTTP);
+                if (response.ok) {
+                    log('HTTP 200 OK. Iniciando WebSocket...');
+                    connectWebSocket();
+                } else {
+                    throw new Error('Status não OK');
+                }
+            } catch (error) {
+                log('Falha HTTP. Tentando em 2s...');
+                // Retry do HTTP
+                setTimeout(startHttpPolling, 2000);
+            }
+        }
+
+        // 2. Função que abre o WebSocket
+        function connectWebSocket() {
+            isPolling = false; // Paramos de fazer polling HTTP
+            setStatus('searching', '⏳ Negociando WebSocket...');
+            
+            ws = new WebSocket(BACKEND_WS);
+
+            ws.onopen = () => {
+                setStatus('connected', '🟢 WebSocket Conectado');
+                log('WS Open!');
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                log('Recebido: ' + data.message);
+            };
+
+            ws.onclose = () => {
+                setStatus('disconnected', '🔴 Conexão Perdida');
+                log('WS Closed. Voltando para HTTP...');
+                ws = null;
+                // A lógica vital: Se o socket fecha, voltamos para o polling HTTP
+                setTimeout(startHttpPolling, 1000);
+            };
+
+            ws.onerror = (err) => {
+                log('Erro no WebSocket');
+                ws.close(); // Força o close para disparar o onclose
+            };
+        }
+
+        // Inicia o ciclo
+        startHttpPolling();
+
+    </script>
+</body>
+</html>
